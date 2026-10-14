@@ -41,7 +41,8 @@ Không dùng cache HTTP hoặc bộ lọc request của Scrapy làm lịch sử 
 ## 3. Phương án vận hành ban đầu
 
 ```text
-Push code → CI: test + build → Publish image → CD: cập nhật image trên server
+PR vào main → CI: test + build (không publish/deploy)
+Push/merge vào main → CI: test + build → Publish image → CD: cập nhật image trên server
 
 Server Linux: cron mỗi giờ (đề xuất)
     ↓ lấy khóa, chỉ cho một lượt chạy
@@ -125,13 +126,19 @@ Phiên bản đầu dùng file artifact và manifest, chưa thêm broker hoặc 
 
 ### CI
 
+Chỉ kích hoạt khi push lên `main` hoặc mở, cập nhật commit, mở lại pull request có
+nhánh đích là `main`. Push lên nhánh khác không có PR vào `main` không chạy CI.
+Push thêm commit vào nhánh có PR đang mở vào `main` vẫn chạy kiểm tra PR. Không
+cấu hình `workflow_dispatch` hoặc chạy CI/CD theo lịch. Lịch crawl độc lập trên server.
+
 Giữ các kiểm tra hiện tại: dependencies, Ruff, nhận diện spider, unittest offline, kiểm tra Compose, build Docker và quyền ghi storage của user container. Test không gọi website HUST.
 
 Bổ sung test cho database migration, khử trùng qua hai lượt chạy, lịch tải lại, body hash, crash recovery và manifest khi triển khai các phần đó.
 
 ### CD
 
-- Sau CI thành công trên nhánh triển khai, publish Docker image với tag commit SHA hoặc digest.
+- Chỉ publish image và deploy sau CI thành công cho sự kiện `push` vào `main`, bao gồm commit sau merge PR. Job publish/deploy phải kiểm tra cả `github.event_name == 'push'` và `github.ref == 'refs/heads/main'`; PR chỉ test/build, không publish hoặc deploy.
+- Publish Docker image với tag commit SHA hoặc digest.
 - Server pull image đã xác định và cập nhật cấu hình dùng cho lượt tiếp theo.
 - Không dừng lượt crawl đang ghi dữ liệu để cập nhật. Deploy và crawl dùng chung cơ chế khóa khi thao tác schema/storage.
 - Migration có phiên bản, backup trước khi đổi schema. Rollback image phải xét khả năng đọc schema hiện tại.

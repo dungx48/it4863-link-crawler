@@ -1,8 +1,9 @@
 # CI và Docker cho link-crawler
 
 Stack: Python 3.13, Scrapy, unittest và Ruff. Không cần secrets hay database.
-GitHub Actions chạy hai job `test` và `docker` trên push/PR vào `main`, hoặc
-chạy thủ công. Job Docker build image, nhận diện spider và kiểm tra quyền ghi
+GitHub Actions chạy hai job `test` và `docker` khi push lên `main` hoặc tạo/cập nhật
+PR vào `main`. Push nhánh khác không chạy CI nếu không cập nhật PR đang mở vào
+`main`; không có trigger chạy thủ công. Job Docker build image, nhận diện spider và kiểm tra quyền ghi
 volume bằng user runtime; không gửi request crawl HUST.
 
 ## Kiểm tra từ thư mục gốc

@@ -54,7 +54,8 @@ cache 1 ngày ở `.cache/httpcache` để chạy lại không tải lại.
 ## CI (GitHub Actions)
 
 Workflow `.github/workflows/ci.yml` chạy khi push lên `main`, tạo/cập nhật pull
-request vào `main`, hoặc chạy thủ công qua tab Actions. CI dùng Ubuntu và Python
+request vào `main`. Push lên nhánh khác không chạy CI, trừ khi cập nhật một PR đang
+mở vào `main` (CI chạy theo sự kiện PR). Không có trigger chạy thủ công. CI dùng Ubuntu và Python
 3.13, cache pip theo `requirements.txt`, chỉ cấp quyền đọc repository và tự hủy
 lượt chạy cũ trên cùng nhánh khi có lượt mới.
 
