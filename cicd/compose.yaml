@@ -1,0 +1,24 @@
+services:
+  crawler:
+    build:
+      context: ..
+      dockerfile: cicd/Dockerfile
+    environment:
+      HUST_LINKS_OUT: /app/output/links.txt
+      HUST_ALLOW_SUBDOMAINS: ${HUST_ALLOW_SUBDOMAINS:-1}
+      HUST_UA: ${HUST_UA:-HustIRBot/1.0 (+academic information-retrieval coursework; contact local)}
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - links:/app/output
+      - httpcache:/app/.cache/httpcache
+    restart: "no"
+
+volumes:
+  links:
+  httpcache:
