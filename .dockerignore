@@ -1,0 +1,9 @@
+# Only application source and its runtime requirements enter the build context.
+**
+!requirements.txt
+!config.py
+!scrapy.cfg
+!crawler/
+!crawler/*.py
+!crawler/spiders/
+!crawler/spiders/*.py
