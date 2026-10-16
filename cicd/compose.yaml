@@ -4,6 +4,13 @@ services:
       context: ..
       dockerfile: cicd/Dockerfile
     environment:
+      PGHOST: ${PGHOST:?Set PGHOST in cicd/.env}
+      PGPORT: ${PGPORT:-5432}
+      PGDATABASE: ${PGDATABASE:?Set PGDATABASE in cicd/.env}
+      PGUSER: ${PGUSER:?Set PGUSER in cicd/.env}
+      PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in cicd/.env}
+      PGSSLMODE: ${PGSSLMODE:-prefer}
+      HUST_STORAGE: postgres
       HUST_LINKS_OUT: /app/output/links.txt
       HUST_ALLOW_SUBDOMAINS: ${HUST_ALLOW_SUBDOMAINS:-1}
       HUST_UA: ${HUST_UA:-HustIRBot/1.0 (+academic information-retrieval coursework; contact local)}
@@ -18,6 +25,8 @@ services:
       - links:/app/output
       - httpcache:/app/.cache/httpcache
     restart: "no"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   crawler-api:
     extends:
