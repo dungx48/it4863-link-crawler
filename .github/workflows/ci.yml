@@ -53,6 +53,12 @@ jobs:
         run: docker compose -f cicd/compose.yaml build
       - name: Discover spiders in container without crawling
         run: docker compose -f cicd/compose.yaml run --rm --no-deps crawler list
+      - name: Import API in container without starting the scheduler
+        run: >-
+          docker compose -f cicd/compose.yaml run --rm --no-deps
+          --entrypoint python crawler -c
+          'from crawler.service import create_app;
+          assert any(route.path == "/crawl" for route in create_app().routes)'
       - name: Check writable storage as the runtime user
         run: >-
           docker compose -f cicd/compose.yaml run --rm --no-deps

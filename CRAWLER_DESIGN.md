@@ -2,7 +2,12 @@
 
 Ngày ghi nhận: 15/10/2026.
 
-Trạng thái: bản đề xuất và bàn giao để triển khai trên máy khác. Chưa thay đổi mã nguồn crawler, chưa cấu hình lịch chạy hoặc deploy. Các giá trị lịch chạy bên dưới là mặc định đề xuất, cần xác nhận trước khi vận hành.
+Trạng thái cập nhật 16/10/2026: đã triển khai service lịch chạy **00:00 mỗi ngày
+giờ Việt Nam (UTC+7)** và API kích hoạt thủ công có bearer token. Có khóa chống
+chạy chồng, timeout và trạng thái job gần nhất. Chưa deploy lên server. SQLite,
+HTML thô, manifest và CD bên dưới vẫn là thiết kế đề xuất, chưa triển khai.
+
+Hướng dẫn bật service hiện có: `cicd/README.md`, mục lịch 00:00 và API.
 
 ## 1. Mục tiêu và ranh giới trách nhiệm
 
@@ -35,6 +40,7 @@ Việc đọc HTML để tìm liên kết là một phần của crawl. Việc b
 - Link PDF/Word/Excel/PowerPoint hiện chỉ được ghi lại, không chủ động tải file.
 - Có robots.txt, AutoThrottle, retry, backoff khi gặp 429/503 và HTTP cache 24 giờ.
 - Có test offline, CI GitHub Actions và Docker Compose. CI kiểm tra/build image, chưa publish image hoặc deploy.
+- `crawler/service.py` quản lý lịch 00:00 và `POST /crawl`, `GET /crawl`; Compose có service `crawler-api`. Không cần cài cron trên host. Chưa bật lịch trên server chỉ bằng việc pull code: phải cấu hình token và khởi động service.
 
 Không dùng cache HTTP hoặc bộ lọc request của Scrapy làm lịch sử crawl lâu dài. Chúng không thay thế database trạng thái.
 
@@ -44,7 +50,7 @@ Không dùng cache HTTP hoặc bộ lọc request của Scrapy làm lịch sử 
 PR vào main → CI: test + build (không publish/deploy)
 Push/merge vào main → CI: test + build → Publish image → CD: cập nhật image trên server
 
-Server Linux: cron mỗi giờ (đề xuất)
+Server Linux: service API, lịch 00:00 mỗi ngày giờ Việt Nam hoặc POST /crawl
     ↓ lấy khóa, chỉ cho một lượt chạy
 Docker Compose chạy crawler một lượt rồi thoát
     ↓
@@ -94,7 +100,10 @@ Schema tối thiểu đề xuất:
 | `crawl_runs` | `id`, `started_at`, `finished_at`, `status`, `stop_reason`, các bộ đếm | Theo dõi lượt chạy thành công, thất bại hoặc đạt giới hạn |
 | `responses` | `id`, `url_id`, `run_id`, `final_url`, `fetched_at`, `status_code`, `content_type`, `body_sha256`, `body_path`, `byte_size` | Phiên bản phản hồi đã lưu; `UNIQUE(url_id, body_sha256)` |
 
-Timestamps lưu theo UTC; giờ chạy cron phải cấu hình múi giờ rõ ràng trên server. Trạng thái lượt chạy phân biệt `completed`, `limited`, `failed`, `interrupted`; đạt giới hạn không có nghĩa là đã crawl hết website.
+Timestamps lưu theo UTC; lịch chạy dùng giờ Việt Nam UTC+7. Trạng thái lượt chạy
+trong schema tương lai phân biệt `completed`, `limited`, `failed`, `interrupted`;
+đạt giới hạn không có nghĩa là đã crawl hết website. Service hiện tại chỉ ghi
+trạng thái tiến trình vào JSON, chưa phân biệt nguyên nhân dừng bên trong Scrapy.
 
 Cấu trúc storage minh họa:
 
@@ -129,7 +138,7 @@ Phiên bản đầu dùng file artifact và manifest, chưa thêm broker hoặc 
 Chỉ kích hoạt khi push lên `main` hoặc mở, cập nhật commit, mở lại pull request có
 nhánh đích là `main`. Push lên nhánh khác không có PR vào `main` không chạy CI.
 Push thêm commit vào nhánh có PR đang mở vào `main` vẫn chạy kiểm tra PR. Không
-cấu hình `workflow_dispatch` hoặc chạy CI/CD theo lịch. Lịch crawl độc lập trên server.
+cấu hình `workflow_dispatch` hoặc chạy CI/CD theo lịch. Lịch crawl độc lập trong service trên server.
 
 Giữ các kiểm tra hiện tại: dependencies, Ruff, nhận diện spider, unittest offline, kiểm tra Compose, build Docker và quyền ghi storage của user container. Test không gọi website HUST.
 
@@ -147,8 +156,8 @@ Bổ sung test cho database migration, khử trùng qua hai lượt chạy, lị
 
 ### Lịch crawl
 
-- Đề xuất kích hoạt mỗi giờ, kiểm tra lại trang thông thường sau 24 giờ; trang seed/Tin tức có thể mỗi giờ. Các giá trị này cần cấu hình được và xác nhận sau khi đo tải.
-- Khóa dùng chung trên host ngăn chạy chồng cả cron lẫn chạy thủ công. Khóa tự giải phóng khi tiến trình chết; tránh chỉ dựa vào file tồn tại.
+- Đã chốt kích hoạt lúc **00:00 mỗi ngày giờ Việt Nam**, đồng thời có API chạy thủ công. Service cần online; không chạy bù lượt bị lỡ. Job đang chạy thì bỏ qua lượt lịch; API trả `409` khi bận. Chính sách tải lại từng URL bằng database vẫn chưa triển khai.
+- Khóa file trên volume dùng chung ngăn chạy chồng lịch và API, đồng thời bảo vệ pipeline chạy CLI. Khóa được giải phóng khi tiến trình chết; không chỉ kiểm tra file tồn tại.
 - Khi lượt chạy lỗi, giữ dữ liệu đã commit và ghi nguyên nhân. Lượt kế tiếp tiếp tục từ trạng thái bền vững; không cần triển khai resume nguyên hàng đợi Scrapy ở phiên bản đầu.
 - Giữ robots.txt, giới hạn request mỗi domain và backoff hiện có; không tăng tốc chỉ vì chuyển lên server.
 
@@ -159,7 +168,7 @@ Bổ sung test cho database migration, khử trùng qua hai lượt chạy, lị
 3. Thêm lịch tải lại dựa trên database; xử lý retry, status và ngân sách crawl mà không bỏ đói URL cũ.
 4. Thêm lưu HTML thô, hash phiên bản và manifest; kiểm tra phục hồi khi dừng giữa chừng.
 5. Cập nhật Docker Compose với volume `/data`, quyền ghi và cấu hình runtime.
-6. Thiết lập khóa và lịch trên server đã chọn; thử một lượt nhỏ trước khi bật lịch thật.
+6. Dùng service lịch/API hiện có, cấu hình token và khởi động trên server đã chọn; thử một lượt nhỏ. Không thêm cron thứ hai song song với scheduler trong service.
 7. Bổ sung publish image và CD sau khi có nơi triển khai và credentials phù hợp.
 
 Không cần triển khai tất cả trong một thay đổi. Mỗi bước phải giữ crawler chạy được và có kiểm tra cho hành vi mới.
@@ -180,7 +189,7 @@ Không cần triển khai tất cả trong một thay đổi. Mỗi bước ph�
 ## 10. Những việc cần xác nhận trước khi vận hành
 
 - Server Linux và registry nào được sử dụng? Ai quản lý credentials triển khai?
-- Lịch kích hoạt, chu kỳ tải lại và giới hạn số trang/thời gian mỗi lượt?
+- Lịch kích hoạt đã chốt 00:00 giờ Việt Nam. Cần xác nhận chu kỳ tải lại từng URL khi thêm database và điều chỉnh ngân sách crawl sau khi đo tải.
 - Bên nhận cần HTML thô hay chỉ URL? Đề xuất này mở rộng từ URL sang HTML thô, chưa được triển khai.
 - Có cần tải tài liệu PDF/Word/Excel hay chỉ bàn giao link như hiện tại?
 - Hai service có đọc chung storage không? Nếu không, chọn cơ chế chuyển artifact.
@@ -188,4 +197,4 @@ Không cần triển khai tất cả trong một thay đổi. Mỗi bước ph�
 
 ## 11. Lời nhắn cho Codex ở máy tiếp theo
 
-> Đọc CRAWLER_DESIGN.md và README.md, kiểm tra mã nguồn thực tế trước khi sửa. Đây là thiết kế đề xuất, chưa triển khai. Chỉ làm phần crawl và bàn giao dữ liệu thô; xử lý nội dung do microservice khác đảm nhiệm. Ưu tiên SQLite bền vững, chống trùng URL qua các lượt, lịch tải lại, HTML thô và manifest; giữ một crawler, không thêm broker hoặc nhiều worker khi chưa cần. Chưa tự deploy hoặc bật crawl định kỳ nếu chưa có server và lịch cụ thể.
+> Đọc CRAWLER_DESIGN.md, README.md và cicd/README.md, kiểm tra mã nguồn trước khi sửa. Đã có service lịch 00:00 giờ Việt Nam và API kích hoạt thủ công; chưa deploy. SQLite, chống trùng qua nhiều lượt, HTML thô và manifest vẫn chưa triển khai. Chỉ làm phần crawl và bàn giao dữ liệu thô; xử lý nội dung do microservice khác đảm nhiệm. Giữ một crawler, không thêm broker hoặc nhiều worker khi chưa cần. Chưa tự deploy nếu chưa có server cụ thể.

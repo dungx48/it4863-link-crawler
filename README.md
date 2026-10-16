@@ -93,9 +93,11 @@ lượt chạy đầu.
 
 Cấu hình và hướng dẫn chi tiết nằm trong [cicd/README.md](cicd/README.md).
 Cần Docker Engine đang chạy và Docker Compose. `cicd/Dockerfile` dùng Python 3.13 slim,
-chỉ cài binary wheels, chạy bằng UID/GID 10001. Compose chạy một tác vụ crawler,
-không mở cổng, không tự khởi động lại; filesystem chỉ đọc, ngoại trừ `/tmp` và
-hai named volume `links` (kết quả), `httpcache` (cache). Không cần database hay secrets.
+chỉ cài binary wheels, chạy bằng UID/GID 10001. Service `crawler` chạy một lượt,
+không mở cổng và không tự khởi động lại. Service `crawler-api` chạy thường trực,
+lên lịch 00:00 mỗi ngày giờ Việt Nam và cho phép kích hoạt qua API có token.
+Filesystem chỉ đọc, ngoại trừ `/tmp` và hai named volume `links` (kết quả),
+`httpcache` (cache). Chưa có database.
 
 ```bash
 docker compose -f cicd/compose.yaml config --quiet
@@ -115,3 +117,40 @@ kết quả/cache. Image hiện được build cục bộ/CI, chưa publish lên
 triển khai production. Trước khi triển khai, cần publish image có tag cố định hoặc
 digest và cấu hình môi trường đích riêng. Dependencies ứng dụng vẫn theo khoảng
 version trong `requirements.txt`, chưa có lockfile nên build chưa tái lập hoàn toàn.
+
+## Chạy mỗi ngày lúc 00:00 và kích hoạt bằng API
+
+Trên server Linux, tạo `cicd/.env` theo `cicd/.env.example`, đặt
+`CRAWLER_API_TOKEN` là chuỗi bí mật ASCII ít nhất 32 ký tự, rồi chạy:
+
+```bash
+docker compose --env-file cicd/.env -f cicd/compose.yaml up -d --build crawler-api
+```
+
+Sau khi service khởi động thành công, lịch **00:00 mỗi ngày theo giờ Việt Nam
+(UTC+7)** tự hoạt động; không cần cài cron. API lắng nghe ở `127.0.0.1:8000`
+trên server. Dùng cùng token trong `.env`:
+
+```bash
+# Chạy thủ công; trả 202 ngay khi tạo job, không đợi crawl xong.
+curl -X POST http://127.0.0.1:8000/crawl \
+  -H 'Authorization: Bearer <CRAWLER_API_TOKEN>'
+
+# Xem job gần nhất và lịch chạy tiếp theo.
+curl http://127.0.0.1:8000/crawl \
+  -H 'Authorization: Bearer <CRAWLER_API_TOKEN>'
+```
+
+Thay `<CRAWLER_API_TOKEN>` bằng token thực. Thiếu/sai token trả `401`; đang crawl
+trả `409`. Dùng SSH tunnel hoặc reverse proxy HTTPS để gọi từ máy khác; cổng
+mặc định chỉ truy cập được trên server. Xem [hướng dẫn vận hành](cicd/README.md#chạy-thường-trực-lịch-0000-và-api).
+
+Chỉ một service/worker dùng chung storage. Lịch và API dùng chung khóa, giữ trạng
+thái job gần nhất ở `output/crawl-status.json`. Service chạy lại sau khi Docker/server
+khởi động nếu Docker được bật cùng hệ thống. Nếu service tắt lúc 00:00, lượt đó
+không chạy bù; có thể gọi API sau khi khởi động. Nếu lượt trước còn chạy lúc 00:00,
+bỏ qua lượt lịch hôm đó. Lượt API không thay đổi lịch ngày tiếp theo.
+
+Service tắt HTTP cache cho các lượt do nó quản lý để lấy dữ liệu mới. Mỗi lượt
+vẫn ghi đè `links.txt` và chỉ loại trùng URL trong lượt đó; SQLite, lưu HTML thô
+và chống trùng qua nhiều lượt vẫn là thiết kế tương lai trong `CRAWLER_DESIGN.md`.
