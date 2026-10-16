@@ -19,6 +19,29 @@ services:
       - httpcache:/app/.cache/httpcache
     restart: "no"
 
+  crawler-api:
+    extends:
+      service: crawler
+    profiles: [server]
+    entrypoint: ["python"]
+    command: ["-m", "crawler.service"]
+    environment:
+      CRAWLER_API_TOKEN: ${CRAWLER_API_TOKEN:-}
+      CRAWLER_MAX_PAGES: ${CRAWLER_MAX_PAGES:-2500}
+      CRAWLER_DEPTH_LIMIT: ${CRAWLER_DEPTH_LIMIT:-4}
+      CRAWLER_TIMEOUT_SECONDS: ${CRAWLER_TIMEOUT_SECONDS:-21600}
+    ports:
+      - "127.0.0.1:${CRAWLER_API_PORT:-8000}:8000"
+    init: true
+    stop_grace_period: 60s
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
 volumes:
   links:
   httpcache:
