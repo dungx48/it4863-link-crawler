@@ -1,5 +1,11 @@
 # Thiết kế crawler HUST chạy định kỳ
 
+> Lưu trữ đề xuất cũ ngày 15–16/10/2026. Các phần mô tả hiện trạng bên dưới
+> phản ánh thời điểm viết: hiện tại crawler đã dùng PostgreSQL và chống trùng
+> URL qua nhiều lượt. SQLite, HTML thô, manifest và CD vẫn chưa triển khai.
+> Đọc [README hiện tại](../../README.md) và [hướng dẫn vận hành](../../cicd/README.md)
+> để cài đặt và chạy ứng dụng.
+
 Ngày ghi nhận: 15/10/2026.
 
 Trạng thái cập nhật 16/10/2026: đã triển khai service lịch chạy **00:00 mỗi ngày

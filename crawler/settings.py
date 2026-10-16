@@ -1,4 +1,5 @@
 """Cấu hình Scrapy — ưu tiên crawl "lịch sự" (polite) với site của trường."""
+import os
 import sys
 from pathlib import Path
 
@@ -47,8 +48,10 @@ HTTPCACHE_DIR = str(Path(__file__).resolve().parent.parent / ".cache" / "httpcac
 HTTPCACHE_IGNORE_HTTP_CODES = [404, 500, 502, 503, 504]
 
 ITEM_PIPELINES = {
-    "crawler.pipelines.LinkFilePipeline": 300,  # ghi link ra file txt
+    ("crawler.pipelines.LinkFilePipeline" if os.getenv("HUST_STORAGE") == "file"
+     else "crawler.pipelines.PostgresLinkPipeline"): 300,
 }
+COMMANDS_MODULE = "crawler.commands"
 
 # OffsiteMiddleware ở tầng downloader chặn cả redirect ra ngoài hust.edu.vn.
 DOWNLOADER_MIDDLEWARES = {

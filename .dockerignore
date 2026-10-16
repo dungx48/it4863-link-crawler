@@ -7,3 +7,5 @@
 !crawler/*.py
 !crawler/spiders/
 !crawler/spiders/*.py
+!crawler/commands/
+!crawler/commands/*.py

@@ -1,5 +1,5 @@
 target-version = "py313"
 
 [lint]
-# Start with syntax and invalid-expression checks for the existing codebase.
-select = ["E9", "F63", "F7", "F82"]
+# Catch syntax errors, unused imports/variables and invalid expressions.
+select = ["E9", "F401", "F63", "F7", "F82", "F841"]

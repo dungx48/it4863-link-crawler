@@ -17,6 +17,20 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: crawler_test
+          POSTGRES_USER: crawler
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U crawler -d crawler_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_POSTGRES_DSN: host=127.0.0.1 dbname=crawler_test user=crawler password=ci-only-password
     steps:
       - uses: actions/checkout@v6
         with:
@@ -43,6 +57,12 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Container smoke checks do not connect to a database.
+    env:
+      PGHOST: localhost
+      PGDATABASE: crawler_test
+      PGUSER: crawler
+      PGPASSWORD: ci-only-password
     steps:
       - uses: actions/checkout@v6
         with:

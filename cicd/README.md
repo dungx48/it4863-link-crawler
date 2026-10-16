@@ -1,163 +1,174 @@
-# CI và Docker cho link-crawler
+﻿# Vận hành crawler với PostgreSQL có sẵn
 
-Stack: Python 3.13, Scrapy, FastAPI/Uvicorn, unittest và Ruff. CI không cần secrets;
-service API cần token runtime. Chưa có database.
-GitHub Actions chạy hai job `test` và `docker` khi push lên `main` hoặc tạo/cập nhật
-PR vào `main`. Push nhánh khác không chạy CI nếu không cập nhật PR đang mở vào
-`main`; không có trigger chạy thủ công. Job Docker build image, nhận diện spider và kiểm tra quyền ghi
-volume bằng user runtime; không gửi request crawl HUST.
+Docker Compose của repo chỉ chạy crawler/API, không tạo PostgreSQL mới.
+Chạy các lệnh Compose từ thư mục gốc repository.
 
-## Kiểm tra từ thư mục gốc
+## Chuẩn bị database
 
-```bash
-python -m pip install -r requirements-dev.txt
-python -m pip check
-python -m ruff check config.py crawler tests
-python -m scrapy list
-python -X utf8 -m unittest discover -s tests -v
-docker compose -f cicd/compose.yaml config -q
-docker compose -f cicd/compose.yaml build
-docker compose -f cicd/compose.yaml run --rm --no-deps crawler list
+Repo không chứa địa chỉ hay tài khoản DB thật. Điền thông tin PostgreSQL của
+bạn vào `cicd/.env`; Compose sẽ báo lỗi nếu thiếu host, database, user hoặc password.
+Nếu cần DB mới riêng, nhờ tài khoản quản trị tạo database và user:
+Trong psql, dùng `\password` để đặt mật khẩu mà không ghi vào lịch sử SQL:
+
+```sql
+CREATE ROLE crawler LOGIN;
+\password crawler
+CREATE DATABASE crawler OWNER crawler;
 ```
 
-## Chạy crawler
+Nếu database/user đã tồn tại và dành riêng cho crawler, dùng lại chúng.
+User cần quyền kết nối, CREATE trong schema public và đọc/ghi bảng `links`.
+Pipeline chỉ tự tạo bảng, không tạo database hay tài khoản. Không dùng DB của
+ứng dụng khác nếu đã có bảng `links` với cấu trúc khác. Cấu trúc hỗ trợ là
+`id bigint identity PRIMARY KEY`, `url text UNIQUE NOT NULL` (HTTP/HTTPS),
+`first_seen_at` và `last_seen_at` kiểu timestamptz, default CURRENT_TIMESTAMP.
+
+## Cấu hình kết nối
 
 ```bash
-# Thực sự crawl HUST; mặc định tối đa 2500 trang, sâu 4 cấp.
-docker compose -f cicd/compose.yaml up --abort-on-container-exit --exit-code-from crawler
-docker compose -f cicd/compose.yaml cp crawler:/app/output/links.txt ./links.txt
-
-# Thay tham số mặc định; kết quả vẫn nằm trong volume links.
-docker compose -f cicd/compose.yaml run --rm crawler crawl hust -a max_pages=100 -s DEPTH_LIMIT=2
-
-# Trích kết quả sau run --rm (container đã được xóa).
-docker compose -f cicd/compose.yaml run --rm --no-deps --entrypoint cat crawler /app/output/links.txt
-docker compose -f cicd/compose.yaml down
-```
-
-Image multi-stage dùng `python:3.13-slim-bookworm`, cài binary wheels và chạy
-bằng UID/GID 10001. Service một lượt `crawler` không mở cổng, không tự restart; root filesystem chỉ
-đọc, `/tmp` dùng tmpfs. Hai named volumes `links` và `httpcache` giữ dữ liệu khi
-container thoát. Mỗi lần crawl ghi đè kết quả trước đó theo pipeline hiện có.
-Không dùng `down --volumes` nếu cần giữ kết quả/cache.
-
-## Chạy thường trực: lịch 00:00 và API
-
-Lịch chạy cố định **00:00 mỗi ngày theo UTC+7 (giờ Việt Nam)**, độc lập múi giờ
-của host. Đây là scheduler trong service API, không phải workflow GitHub Actions
-hoặc cron của host. Dùng một instance, một Uvicorn worker; không dùng `--reload`.
-
-Chuẩn bị trên server Linux (chỉ copy file mẫu khi chưa có `.env`):
-
-```bash
+# Chỉ copy ở lần thiết lập đầu tiên.
 cp cicd/.env.example cicd/.env
-# Tạo token riêng, lưu trong file bị Git ignore; không commit file này.
-printf '\nCRAWLER_API_TOKEN=%s\n' "$(openssl rand -hex 32)" >> cicd/.env
 chmod 600 cicd/.env
-docker compose --env-file cicd/.env -f cicd/compose.yaml config --quiet
-docker compose --env-file cicd/.env -f cicd/compose.yaml up -d --build crawler-api
-docker compose --env-file cicd/.env -f cicd/compose.yaml logs -f crawler-api
 ```
 
-Không chạy lệnh `config` in toàn bộ cấu hình nếu không muốn lộ token ra terminal;
-dùng `config --quiet`. Sau lần tạo token đầu, giữ nguyên `.env` khi cập nhật code.
-`restart: unless-stopped` khởi động lại service sau khi Docker restart, trừ khi
-đã chủ động dừng nó. Docker trên server cần được bật cùng hệ thống.
+Điền các biến sau trong `.env`, không gửi mật khẩu qua chat hay commit file:
 
-| API | Xác thực | Kết quả |
+| Biến | Mặc định | Ý nghĩa |
 |---|---|---|
-| `GET /health` | Không | `200` khi API đã khởi động |
-| `POST /crawl` | `Authorization: Bearer <token>` | `202` + job ID; `409` nếu bận; `503` nếu không khởi động được process |
-| `GET /crawl` | Cùng token | Trạng thái đang chạy, job gần nhất, giờ lịch tiếp theo |
+| `PGHOST` | Bắt buộc | Địa chỉ PostgreSQL nhìn từ container |
+| `PGPORT` | `5432` | Cổng PostgreSQL |
+| `PGDATABASE` | Bắt buộc | Database đã tạo |
+| `PGUSER` | Bắt buộc | Tài khoản DB |
+| `PGPASSWORD` | Bắt buộc | Mật khẩu tài khoản DB |
+| `PGSSLMODE` | `prefer` | Chế độ TLS; dùng `require` nếu DB yêu cầu TLS |
+| `CRAWLER_API_TOKEN` | Bắt buộc với API | Bearer token ASCII ít nhất 32 ký tự |
+| `CRAWLER_API_PORT` | `8000` | Cổng API trên loopback |
+| `CRAWLER_MAX_PAGES` | `2500` | Số trang HTML tối đa, lớn hơn 0 |
+| `CRAWLER_DEPTH_LIMIT` | `4` | Độ sâu, lớn hơn 0 |
+| `CRAWLER_TIMEOUT_SECONDS` | `21600` | Timeout mỗi lượt, mặc định 6 giờ |
+
+Bỏ dấu `#` ở dòng `CRAWLER_API_TOKEN` trong file mẫu và điền token mới, có thể tạo
+bằng `openssl rand -hex 32`. Nếu secret có ký tự đặc biệt như `$` hoặc `#`, đặt
+giá trị trong dấu nháy đơn theo cú pháp dotenv. Không dùng `source cicd/.env`.
+
+Chọn địa chỉ DB:
+
+- PostgreSQL cài trực tiếp cùng server: dùng `PGHOST=host.docker.internal`.
+  Compose ánh xạ tên này về host gateway trên Linux. `127.0.0.1` bên trong
+  crawler là chính container, không phải server.
+- PostgreSQL trong Docker cùng server: dùng địa chỉ host và cổng DB đã publish
+  mà crawler có thể truy cập, hoặc nối crawler vào cùng Docker network rồi dùng
+  tên service DB làm `PGHOST`.
+- PostgreSQL ở server khác: dùng hostname/IP riêng của server DB và cổng của nó.
+
+DB cần lắng nghe trên địa chỉ crawler truy cập được. Nếu DB hiện chỉ nghe
+`127.0.0.1`, host gateway sẽ không kết nối được: cấu hình `listen_addresses` cho
+địa chỉ cần dùng và thêm rule `pg_hba.conf` giới hạn đúng user/database/subnet
+của crawler với xác thực `scram-sha-256`. Không mở truy cập cho toàn Internet.
+Cấu hình cụ thể phụ thuộc cách PostgreSQL hiện đang chạy; giữ nguyên quyền của
+các ứng dụng đang dùng DB. Tham khảo [Docker extra_hosts](https://docs.docker.com/reference/compose-file/services/#extra_hosts)
+và [PostgreSQL client authentication](https://www.postgresql.org/docs/current/auth-pg-hba-conf.html).
+
+## Kiểm tra kết nối và chạy
 
 ```bash
+docker compose --env-file cicd/.env -f cicd/compose.yaml config --quiet
+docker compose --env-file cicd/.env -f cicd/compose.yaml build crawler
+docker compose --env-file cicd/.env -f cicd/compose.yaml run --rm --entrypoint python crawler \
+  -c 'import psycopg; c = psycopg.connect(connect_timeout=10); print(c.execute("SELECT 1").fetchone()); c.close()'
+docker compose --env-file cicd/.env -f cicd/compose.yaml up -d --build crawler-api
+curl --fail http://127.0.0.1:8000/health
+```
+
+Dùng `config --quiet` để không in secret. Bước SELECT phải thành công trước khi
+chạy job. GET `/health` chỉ kiểm tra API, không kiểm tra DB. Container crawler
+chạy UID/GID 10001 với root filesystem chỉ đọc. Volume `links` giữ khóa/trạng
+thái job; `httpcache` giữ cache CLI. Dữ liệu DB do PostgreSQL hiện có quản lý.
+
+## Lịch và API
+
+Lịch cố định 00:00 mỗi ngày theo UTC+7, không phụ thuộc múi giờ host.
+Không crawl ngay lúc khởi động, không chạy bù lượt bị lỡ khi service tắt.
+Nếu đang có job lúc 00:00, bỏ qua lượt lịch đó. Dùng một instance, một worker.
+Docker cần bật cùng hệ thống để service tự khởi động lại sau reboot.
+
+```bash
+# Thay placeholder bằng token thực.
 curl -X POST http://127.0.0.1:8000/crawl \
   -H 'Authorization: Bearer <CRAWLER_API_TOKEN>'
 curl http://127.0.0.1:8000/crawl \
   -H 'Authorization: Bearer <CRAWLER_API_TOKEN>'
+docker compose --env-file cicd/.env -f cicd/compose.yaml logs --tail=100 crawler-api
 ```
 
-Thay placeholder bằng token đã lưu trong `.env`. API không nhận URL hoặc command
-tùy ý; mọi lượt dùng cùng cấu hình crawl của server. Không tự retry `POST` khi
-mất kết nối; kiểm tra `GET /crawl` trước để tránh tạo lượt mới ngoài ý muốn.
+POST trả `202` ngay khi tạo process; `409` nếu bận; `401` nếu thiếu/sai token;
+`503` nếu không khởi tạo được process. Nếu mất kết nối sau POST, kiểm tra GET
+trước khi gọi lại. Lỗi lưu DB khiến job `failed`. `finished`/exit 0 không bảo đảm
+mọi URL đều tải thành công: xem log Scrapy.
 
-Port chỉ bind `127.0.0.1` trên host. Để gọi từ máy cá nhân có thể mở SSH tunnel:
+API chỉ bind localhost. Để truy cập từ máy cá nhân:
 
 ```bash
-ssh -L 8000:127.0.0.1:8000 user@your-server
+ssh -L 8000:127.0.0.1:8000 user@server
 ```
 
-Sau đó gọi `http://127.0.0.1:8000` trên máy cá nhân. Nếu cung cấp API cho
-microservice khác máy, cấu hình reverse proxy HTTPS và giữ bearer token.
+Sau đó gọi API qua localhost trên máy cá nhân.
 
-Biến runtime:
+## Xem dữ liệu, export và backup
 
-| Biến | Mặc định | Ý nghĩa |
-|---|---|---|
-| `CRAWLER_API_TOKEN` | Bắt buộc | Bí mật ASCII ít nhất 32 ký tự; thiếu thì service không khởi động |
-| `CRAWLER_API_PORT` | `8000` | Cổng loopback trên host |
-| `CRAWLER_MAX_PAGES` | `2500` | Giới hạn trang HTML mỗi lượt, phải lớn hơn 0 |
-| `CRAWLER_DEPTH_LIMIT` | `4` | Độ sâu, phải lớn hơn 0 |
-| `CRAWLER_TIMEOUT_SECONDS` | `21600` | Giới hạn 6 giờ mỗi lượt; quá hạn thì dừng process |
+Dùng bảng `links` hiện có; chỉ tạo nếu chưa có. URL mới được thêm; URL cũ giữ
+`first_seen_at` và cập nhật `last_seen_at`. Timestamps dùng `timestamptz`.
+Không lưu HTML thô hay xóa URL không còn xuất hiện. Mỗi URL được commit riêng;
+lượt thất bại vẫn có thể đã ghi một phần dữ liệu. File txt cũ không tự nhập vào DB.
 
-- Không crawl ngay khi service khởi động. Lần tự động đầu là 00:00 kế tiếp.
-- Không chạy bù khi host/service tắt lúc 00:00. Nếu đang có job tại thời điểm
-  lịch, bỏ qua lượt lịch đó và ghi log; API thủ công không dịch lịch tự động.
-- Khóa trên volume `links` ngăn chạy chồng giữa API/lịch và bảo vệ pipeline ghi
-  file khi chạy CLI trực tiếp. Không đặt biến nội bộ `_HUST_CRAWL_LOCK_HELD`
-  bằng tay; biến này chỉ dành cho process con do service đã giữ khóa khởi tạo.
-- Service thứ hai dùng chung volume bị từ chối khởi động để tránh trùng scheduler.
-- Khi dừng service, process con được yêu cầu kết thúc; nếu không thoát trong
-  30 giây sẽ bị kill. Thông tin job gần nhất lưu tại `crawl-status.json` trong
-  volume `links`; không phải lịch sử đầy đủ. Job đang chạy khi service chết được
-  đánh dấu `interrupted` ở lần khởi động sau.
-- Trạng thái `finished`/exit code 0 chỉ nói process đã thoát bình thường, không
-  bảo đảm mọi URL đều tải thành công; xem log Scrapy để biết lỗi hoặc đạt giới hạn.
-- Các lượt từ service tắt HTTP cache để lấy phản hồi mới. `links.txt` vẫn ghi
-  đè mỗi lượt, chưa có database chống trùng qua các lượt hoặc lưu HTML thô.
-- Log API và crawler xuất stdout/stderr, xem bằng `docker compose logs`.
+Dùng psql/pgAdmin kết nối tới database crawler, chạy:
 
-Cập nhật code trên server:
+```sql
+SELECT count(*) FROM links;
+SELECT id, url, first_seen_at, last_seen_at
+FROM links ORDER BY last_seen_at DESC LIMIT 20;
+```
+
+Trên máy có PostgreSQL client và kết nối tới DB, thay các placeholder bằng giá
+trị thực. Dùng `.pgpass` (quyền 600) hoặc nhập mật khẩu khi client hỏi:
 
 ```bash
-git pull
+psql -h <DB_HOST> -p <DB_PORT> -U crawler -d crawler \
+  -Atc 'SELECT url FROM links ORDER BY url;' > links.txt
+umask 077
+pg_dump -h <DB_HOST> -p <DB_PORT> -U crawler -d crawler \
+  -Fc -f crawler-backup.dump
+```
+
+Kiểm tra exit code và lưu backup ngoài server. Dùng pg_dump phù hợp phiên bản
+server. Nếu hệ thống đã có backup PostgreSQL, đưa database crawler vào lịch đó.
+Phục hồi vào DB đích trống đã tạo, dừng crawler trước và không ghi đè DB của
+ứng dụng khác:
+
+```bash
+pg_restore -h <DB_HOST> -p <DB_PORT> -U crawler -d <EMPTY_TARGET_DB> \
+  --exit-on-error crawler-backup.dump
+```
+
+## Cập nhật và dừng
+
+Kiểm tra GET `/crawl` và đợi job kết thúc trước khi cập nhật:
+
+```bash
+git pull --ff-only origin main
 docker compose --env-file cicd/.env -f cicd/compose.yaml up -d --build crawler-api
+# Dừng crawler/API:
+docker compose --env-file cicd/.env -f cicd/compose.yaml down
 ```
 
-Lệnh cập nhật có thể dừng lượt đang chạy; kiểm tra `GET /crawl` và cập nhật lúc
-nhàn rỗi. Đây là cập nhật thủ công, chưa phải CD tự động.
+Compose không quản lý vòng đời PostgreSQL có sẵn. Không dùng `down --volumes`
+nếu cần giữ khóa/trạng thái/cache crawler. Cập nhật có thể ngắt job đang chạy.
+Trạng thái job gần nhất ở `crawl-status.json` trong volume `links`, không phải
+lịch sử tất cả các lượt.
 
-## Cấu hình tùy chọn
+## CI và kiểm chứng
 
-Copy `cicd/.env.example` thành `cicd/.env`, sửa user agent/phạm vi subdomain rồi dùng:
-
-```bash
-docker compose --env-file cicd/.env -f cicd/compose.yaml config -q
-docker compose --env-file cicd/.env -f cicd/compose.yaml up --build --abort-on-container-exit --exit-code-from crawler
-```
-
-`HUST_LINKS_OUT` được cố định trong Compose tại `/app/output/links.txt` để kết quả
-luôn nằm trong volume ghi được. Docker build context là repository root;
-`.dockerignore` chỉ cho phép source và requirements runtime vào context.
-
-## Publish/deploy
-
-Chưa cấu hình publish hoặc CD vì chưa yêu cầu registry/môi trường đích.
-Không cần GitHub secrets cho CI. Commit/push các file để GitHub chạy workflow;
-có thể chọn required status checks `test` và `docker` trong ruleset của `main`.
-Dependencies ứng dụng hiện theo khoảng version, chưa có lockfile nên build chưa
-tái lập hoàn toàn. Actions dùng tag `v6`; xem tài liệu chính thức của
-[checkout](https://github.com/actions/checkout) và
-[setup-python](https://github.com/actions/setup-python).
-
-## Kết quả kiểm tra local (2026-10-15)
-
-Các lệnh Python bên trên chạy bằng `.venv/Scripts/python.exe` trên Windows:
-cài requirements-dev, `pip check`, Ruff, `scrapy list` (nhận diện `hust`) và
-unittest (5 test) đều exit 0. Compose `config -q` với cấu hình mặc định và với
-`--env-file cicd/.env.example` đều exit 0.
-
-`docker compose -f cicd/compose.yaml build` exit 1 do Docker Engine chưa chạy
-(không tìm thấy pipe `dockerDesktopLinuxEngine`). Build image và smoke test
-container chưa được xác nhận; bật Docker Desktop với Linux containers rồi chạy
-lại ba lệnh Docker trong mục kiểm tra. Chưa chạy workflow trên GitHub.
+CI dùng PostgreSQL 17 tạm riêng để kiểm tra SQL, không kết nối DB của server.
+Sau đó build Docker và kiểm tra spider/API/quyền ghi volume, không crawl HUST.
+Đặt `TEST_POSTGRES_DSN` trỏ tới DB test riêng để bật test tích hợp local.
+Chưa có CD tự động hay publish image. Dependencies chưa có lockfile.

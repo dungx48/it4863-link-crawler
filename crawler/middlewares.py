@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import logging
 
-from scrapy.exceptions import IgnoreRequest
-
 log = logging.getLogger(__name__)
 
 
